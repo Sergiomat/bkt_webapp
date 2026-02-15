@@ -1,6 +1,10 @@
 "use client";
 
-import React, { useState } from 'react';
+import { useRouter } from "next/navigation";
+import { getAccessToken } from "../src/lib/auth";
+import { apiFetch } from "../src/lib/api";
+
+import React, { useEffect, useState } from 'react';
 import { 
   Building2, Wallet, TrendingUp, Plus, ArrowRight, LayoutDashboard,
   Hammer, FileText, PieChart, ChevronRight, X, Trash2, Users, Truck,
@@ -8,6 +12,7 @@ import {
   Settings, Moon, Sun, BarChart3, Image as ImageIcon, History, Upload,
   Calendar, Clock, AlertTriangle, Pencil, LineChart
 } from 'lucide-react';
+
 
 // --- 1. DATOS MAESTROS ---
 const RUBROS_MASTER = [
@@ -40,6 +45,20 @@ const RUBROS_MASTER = [
 ];
 
 const APP_VERSION = "8.3 (Full Enterprise)";
+
+type DashboardSummary = {
+  cash_total: number;
+  active_projects: number;
+  clients: number;
+  suppliers: number;
+  recent_projects: Array<{
+    project_id: number;
+    project_name: string;
+    client_name: string;
+    net: number;
+  }>;
+};
+
 
 // --- 2. DATOS INICIALES ---
 const DB_INICIAL = {
@@ -78,9 +97,42 @@ const DB_INICIAL = {
 };
 
 export default function BKTApp() {
+  // --- LOGIN ---
+  const router = useRouter();
+
   // --- ESTADOS ---
   const [vista, setVista] = useState<'DASHBOARD' | 'METRICAS' | 'OBRAS_LISTA' | 'CLIENTES' | 'PROVEEDORES' | 'DETALLE_OBRA' | 'CONFIG'>('DASHBOARD');
   const [config, setConfig] = useState(DB_INICIAL.config);
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+
+// --- AUTH + DASHBOARD SUMMARY (JWT) ---
+// Si no hay token -> redirect a /login
+// Si hay token -> busca el resumen del dashboard en el backend
+useEffect(() => {
+  const token = getAccessToken();
+  if (!token) {
+    router.push("/login");
+    return;
+  }
+
+  setDashboardError(null);
+
+  apiFetch<DashboardSummary>("/dashboard/summary/")
+    .then((data) => setDashboardSummary(data))
+    .catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "UNAUTHORIZED") {
+        router.push("/login");
+        return;
+      }
+      console.error(e);
+      setDashboardSummary(null);
+      setDashboardError(msg);
+    });
+}, [router]);
+
   
   // Datos
   const [obras, setObras] = useState(DB_INICIAL.obras);
@@ -110,6 +162,29 @@ export default function BKTApp() {
   const [nuevaObra, setNuevaObra] = useState({ 
     id: 0, nombre: '', clienteId: 0, direccion: '', estado: 'En Curso', fechaInicio: '', fechaFin: '' 
   });
+
+  
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    setDashboardError(null);
+
+    apiFetch<DashboardSummary>("/dashboard/summary/")
+      .then((data) => setDashboardSummary(data))
+      .catch((e) => {
+        if (String(e?.message) === "UNAUTHORIZED") {
+          router.push("/login");
+          return;
+        }
+        console.error(e);
+        setDashboardSummary(null);
+        setDashboardError(e instanceof Error ? e.message : String(e));
+      });
+  }, [router]);
 
   // --- LÓGICA DE NEGOCIO ---
 
@@ -270,11 +345,37 @@ export default function BKTApp() {
         {vista === 'DASHBOARD' && (
           <div className="animate-in fade-in duration-500">
             <Header titulo="Panel de Control" subtitulo="Resumen general" isDark={isDark} />
+            {dashboardError && (
+              <div className={`mb-4 text-sm ${isDark ? "text-amber-300" : "text-amber-700"}`}>
+                No se pudo cargar el resumen del backend ({dashboardError}). Mostrando datos locales.
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <KpiCard isDark={isDark} title="Caja Total" value={`$ ${obras.reduce((acc, o) => acc + calcularSaldo(o.id), 0).toLocaleString()}`} icon={<Wallet className="text-blue-600"/>} trend="+ Global" />
-              <KpiCard isDark={isDark} title="Obras Activas" value={obras.length} icon={<Building2 className="text-emerald-600"/>} />
-              <KpiCard isDark={isDark} title="Clientes" value={clientes.length} icon={<Users className="text-purple-600"/>} />
-              <KpiCard isDark={isDark} title="Proveedores" value={proveedores.length} icon={<Truck className="text-orange-600"/>} />
+              <KpiCard
+                isDark={isDark}
+                title="Caja Total"
+                value={`$ ${(dashboardSummary?.cash_total ?? obras.reduce((acc, o) => acc + calcularSaldo(o.id), 0)).toLocaleString()}`}
+                icon={<Wallet className="text-blue-600" />}
+                trend="+ Global"
+              />
+              <KpiCard
+                isDark={isDark}
+                title="Obras Activas"
+                value={dashboardSummary?.active_projects ?? obras.length}
+                icon={<Building2 className="text-emerald-600" />}
+              />
+              <KpiCard
+                isDark={isDark}
+                title="Clientes"
+                value={dashboardSummary?.clients ?? clientes.length}
+                icon={<Users className="text-purple-600" />}
+              />
+              <KpiCard
+                isDark={isDark}
+                title="Proveedores"
+                value={dashboardSummary?.suppliers ?? proveedores.length}
+                icon={<Truck className="text-orange-600" />}
+              />
             </div>
 
             <div className={`rounded-xl shadow-sm border overflow-hidden ${bgCard}`}>
@@ -283,18 +384,78 @@ export default function BKTApp() {
                  <button onClick={() => setVista('OBRAS_LISTA')} className="text-sm text-blue-600 hover:underline">Ver todas</button>
                </div>
                <div className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
-                 {obras.slice(0, 3).map(obra => (
-                   <div key={obra.id} onClick={(e) => { e.stopPropagation(); irAObra(obra); }} className={`p-4 flex justify-between items-center cursor-pointer transition-colors ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50'}`}>
-                      <div className="flex items-center gap-4 pointer-events-none">
-                        <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}><Building2 size={20}/></div>
-                        <div>
-                            <p className="font-bold text-sm">{obra.nombre}</p>
-                            <p className={`text-xs ${textMuted}`}>{clientes.find(c => c.id === obra.clienteId)?.nombre || 'Sin Cliente'}</p>
-                        </div>
-                      </div>
-                      <span className={`font-mono font-bold text-sm pointer-events-none ${calcularSaldo(obra.id) < 0 ? 'text-red-500' : 'text-emerald-500'}`}>$ {calcularSaldo(obra.id).toLocaleString()}</span>
-                   </div>
-                 ))}
+                 {dashboardSummary?.recent_projects
+                   ? dashboardSummary.recent_projects.map((p) => (
+                       <div
+                         key={p.project_id}
+                         className={`p-4 flex justify-between items-center transition-colors ${
+                           isDark ? "hover:bg-slate-800" : "hover:bg-slate-50"
+                         }`}
+                       >
+                         <div className="flex items-center gap-4">
+                           <div
+                             className={`h-10 w-10 rounded-lg flex items-center justify-center ${
+                               isDark
+                                 ? "bg-slate-800 text-slate-400"
+                                 : "bg-slate-100 text-slate-500"
+                             }`}
+                           >
+                             <Building2 size={20} />
+                           </div>
+                           <div>
+                             <p className="font-bold text-sm">{p.project_name}</p>
+                             <p className={`text-xs ${textMuted}`}>{p.client_name}</p>
+                           </div>
+                         </div>
+                         <span
+                           className={`font-mono font-bold text-sm ${
+                             p.net < 0 ? "text-red-500" : "text-emerald-500"
+                           }`}
+                         >
+                           $ {p.net.toLocaleString()}
+                         </span>
+                       </div>
+                     ))
+                   : obras.slice(0, 3).map((obra) => (
+                       <div
+                         key={obra.id}
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           irAObra(obra);
+                         }}
+                         className={`p-4 flex justify-between items-center cursor-pointer transition-colors ${
+                           isDark ? "hover:bg-slate-800" : "hover:bg-slate-50"
+                         }`}
+                       >
+                         <div className="flex items-center gap-4 pointer-events-none">
+                           <div
+                             className={`h-10 w-10 rounded-lg flex items-center justify-center ${
+                               isDark
+                                 ? "bg-slate-800 text-slate-400"
+                                 : "bg-slate-100 text-slate-500"
+                             }`}
+                           >
+                             <Building2 size={20} />
+                           </div>
+                           <div>
+                             <p className="font-bold text-sm">{obra.nombre}</p>
+                             <p className={`text-xs ${textMuted}`}>
+                               {clientes.find((c) => c.id === obra.clienteId)?.nombre ||
+                                 "Sin Cliente"}
+                             </p>
+                           </div>
+                         </div>
+                         <span
+                           className={`font-mono font-bold text-sm pointer-events-none ${
+                             calcularSaldo(obra.id) < 0
+                               ? "text-red-500"
+                               : "text-emerald-500"
+                           }`}
+                         >
+                           $ {calcularSaldo(obra.id).toLocaleString()}
+                         </span>
+                       </div>
+                     ))}
                </div>
             </div>
           </div>

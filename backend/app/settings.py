@@ -111,6 +111,11 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
-cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+cors_origins = os.environ.get(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:3001",
+)
+
 CORS_ALLOWED_ORIGINS = [o.strip() for o in cors_origins.split(",") if o.strip()]
+
 CORS_ALLOW_CREDENTIALS = True
